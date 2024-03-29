@@ -470,6 +470,7 @@ if __name__ == '__main__':
     parser.add_argument('--quant-directory', type=str, default=None, help='Specify the directory for export quantization parameters to toml format. `None` means no export by default.')
 
     args = parser.parse_args()
+    print(args)
 
     if args.layers_dist:
         gpu_dist = [int(x) for x in args.layers_dist.split(':')]

@@ -104,7 +104,8 @@ try:
         g_ptrs = g_ptr + offs_k
         # shifter is used to extract the N bits of each element in the 32-bit word from B
         scales_ptrs = scales_ptr + offs_bn[None, :]
-        zeros_ptrs = zeros_ptr + (offs_bn[None, :] // infearure_per_bits)
+        zeros_ptrs = zeros_ptr + offs_bn[None, :]
+        # zeros_ptrs = zeros_ptr + (offs_bn[None, :] // infearure_per_bits)
 
         shifter = (offs_k % infearure_per_bits) * bits
         zeros_shifter = (offs_bn % infearure_per_bits) * bits
@@ -117,8 +118,8 @@ try:
             scales = tl.load(scales_ptrs + g_idx[:, None] * stride_scales)  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
             zeros = tl.load(zeros_ptrs + g_idx[:, None] * stride_zeros)  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
 
-            zeros = (zeros >> zeros_shifter[None, :]) & maxq
-            zeros = (zeros + 1)
+            # zeros = (zeros >> zeros_shifter[None, :]) & maxq
+            # zeros = (zeros + 1)
 
             a = tl.load(a_ptrs, mask=a_mask, other=0.)  # (BLOCK_SIZE_M, BLOCK_SIZE_K)
             b = tl.load(b_ptrs)  # (BLOCK_SIZE_K, BLOCK_SIZE_N), but repeated
@@ -225,7 +226,8 @@ try:
 
         # shifter is used to extract the N bits of each element in the 32-bit word from B
         scales_ptrs = scales_ptr + offs_n[None, :] + g_idx[:, None] * stride_scales
-        zeros_ptrs = zeros_ptr + (offs_n[None, :] // infearure_per_bits) + g_idx[:, None] * stride_zeros
+        # zeros_ptrs = zeros_ptr + (offs_n[None, :] // infearure_per_bits) + g_idx[:, None] * stride_zeros
+        zeros_ptrs = zeros_ptr + offs_n[None, :] + g_idx[:, None] * stride_zeros
 
         shifter = (offs_bk % infearure_per_bits) * bits
         zeros_shifter = (offs_n % infearure_per_bits) * bits
@@ -236,8 +238,8 @@ try:
             scales = tl.load(scales_ptrs)  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
             zeros = tl.load(zeros_ptrs)  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
 
-            zeros = (zeros >> zeros_shifter[None, :]) & maxq
-            zeros = (zeros + 1)
+            # zeros = (zeros >> zeros_shifter[None, :]) & maxq
+            # zeros = (zeros + 1)
 
             a = tl.load(a_ptrs, mask=a_mask, other=0.)  # (BLOCK_SIZE_M, BLOCK_SIZE_N)
             b = tl.load(b_ptrs)  # (BLOCK_SIZE_K, BLOCK_SIZE_N), but repeated
@@ -314,7 +316,7 @@ class QuantLinear(nn.Module):
         self.groupsize = groupsize if groupsize != -1 else infeatures
 
         self.register_buffer('qweight', torch.zeros((infeatures // 32 * self.bits, outfeatures), dtype=torch.int32))
-        self.register_buffer('qzeros', torch.zeros((math.ceil(infeatures / self.groupsize), outfeatures // 32 * self.bits), dtype=torch.int32))
+        self.register_buffer('qzeros', torch.zeros((math.ceil(infeatures / self.groupsize), outfeatures), dtype=torch.float16))
         self.register_buffer('scales', torch.zeros((math.ceil(infeatures / self.groupsize), outfeatures), dtype=torch.float16))
         self.register_buffer('g_idx', torch.tensor([i // self.groupsize for i in range(infeatures)], dtype=torch.int32))
         if bias:
@@ -329,6 +331,7 @@ class QuantLinear(nn.Module):
         zeros = zeros.t().contiguous()
         scale_zeros = zeros * scales
         self.scales = scales.clone().half()
+        self.qzeros = zeros.clone().half()
         if linear.bias is not None:
             self.bias = linear.bias.clone().half()
 
@@ -353,22 +356,22 @@ class QuantLinear(nn.Module):
         qweight = qweight.astype(np.int32)
         self.qweight = torch.from_numpy(qweight)
 
-        zeros -= 1
-        zeros = zeros.numpy().astype(np.uint32)
-        qzeros = np.zeros((zeros.shape[0], zeros.shape[1] // 32 * self.bits), dtype=np.uint32)
-        i = 0
-        col = 0
-        while col < qzeros.shape[1]:
-            if self.bits in [2, 4, 8]:
-                for j in range(i, i + (32 // self.bits)):
-                    qzeros[:, col] |= zeros[:, j] << (self.bits * (j - i))
-                i += 32 // self.bits
-                col += 1
-            else:
-                raise NotImplementedError("Only 2,4,8 bits are supported.")
+        # zeros -= 1
+        # zeros = zeros.numpy().astype(np.uint32)
+        # qzeros = np.zeros((zeros.shape[0], zeros.shape[1] // 32 * self.bits), dtype=np.uint32)
+        # i = 0
+        # col = 0
+        # while col < qzeros.shape[1]:
+        #     if self.bits in [2, 4, 8]:
+        #         for j in range(i, i + (32 // self.bits)):
+        #             qzeros[:, col] |= zeros[:, j] << (self.bits * (j - i))
+        #         i += 32 // self.bits
+        #         col += 1
+        #     else:
+        #         raise NotImplementedError("Only 2,4,8 bits are supported.")
 
-        qzeros = qzeros.astype(np.int32)
-        self.qzeros = torch.from_numpy(qzeros)
+        # qzeros = qzeros.astype(np.int32)
+        # self.qzeros = torch.from_numpy(qzeros)
 
     def forward(self, x):
         out_shape = x.shape[:-1] + (self.outfeatures, )
